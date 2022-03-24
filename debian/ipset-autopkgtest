@@ -1,0 +1,104 @@
+#!/bin/sh
+
+assert_pkg() {
+  pkg=$1
+
+  if ! dpkg -l | grep -w "$pkg" | grep ^ii >/dev/null 2>&1; then
+    echo "$pkg is required"
+    exit 1
+  fi
+}
+
+assert_pkg autopkgtest
+assert_pkg fakemachine
+
+DEFAULT_VMIMAGE_DIR=~/.local/lib/ipset-autopkgtest
+DEFAULT_VMIMAGE_RELEASE=sid
+DEFAULT_VMIMAGE_FORCE_RECREATE=false
+DEFAULT_MIRROR=https://deb.debian.org/debian
+VMIMAGE_DIR=$DEFAULT_VMIMAGE_DIR
+VMIMAGE_RELEASE=$DEFAULT_VMIMAGE_RELEASE
+VMIMAGE_FORCE_RECREATE=$DEFAULT_VMIMAGE_FORCE_RECREATE
+MIRROR=$DEFAULT_MIRROR
+
+TESTSOURCE=
+QEMU_OPT=
+
+show_help() {
+  cat <<EOF
+** autopkgtest wrapper for ipset
+Usage: $0 [options] [testsrc]
+Options
+  --showboot                    : Show VM boot process
+  --vmimage-dir <dir>           : VM image directory
+                                  default: $DEFAULT_VMIMAGE_DIR
+  --vmimage-release <release>   : VM image apt suite or codename available from mirror
+                                  default: $DEFAULT_VMIMAGE_RELEASE
+  --vmimage-force-recreate      : VM image forced recreating
+                                  default: $DEFAULT_VMIMAGE_FORCE_RECREATE
+  --mirror <url>                : Mirror URL
+                                  default: $DEFAULT_MIRROR
+  -h|--help                     : Show help
+
+Test Source
+
+  testsrc can be one of:
+
+  * current directory - need explicitly "."
+  * .dsc file
+  * source package directory
+  * source package name
+  * git URL or URL#branch
+  * .changes file
+EOF
+}
+
+OPTIONS=$(getopt -o h --long help,showboot,binary-test,vmimage-dir:,vmimage-release:,vmimage-force-recreate,mirror: \
+  -n 'ipset-autopkgtest' -- "$@")
+
+eval set -- "$OPTIONS"
+parsed=$?
+
+if [ $parsed != 0 ]; then
+  show_help
+  exit 1
+fi
+
+while true; do
+  case "$1" in
+    --showboot)
+      QEMU_OPT="--show-boot"; shift ;;
+    --vmimage-dir)
+      VMIMAGE_DIR=$2; shift 2 ;;
+    --vmimage-release)
+      VMIMAGE_RELEASE=$2; shift 2 ;;
+    --vmimage-force-recreate)
+      VMIMAGE_FORCE_RECREATE=true; shift ;;
+    --mirror)
+      MIRROR=$2; shift 2 ;;
+    -h | --help)
+      show_help
+      exit 0
+      shift; break ;;
+    --) TESTSOURCE=$2; shift; break ;;
+    *) break ;;
+  esac
+done
+
+test -z "$TESTSOURCE" && show_help
+
+VMIMAGE_NAME=ipset-autopkgtest-${VMIMAGE_RELEASE}.img
+VMIMAGE=${VMIMAGE_DIR}/${VMIMAGE_NAME}
+
+# Prepare VM image
+if [ ! -f "${VMIMAGE}" ] || [ "${VMIMAGE_FORCE_RECREATE}" = "true" ]; then
+  mkdir -p "${VMIMAGE_DIR}"
+
+  autopkgtest-build-qemu \
+    --size=2G \
+    --mirror="${MIRROR}" \
+    "${VMIMAGE_RELEASE}" \
+    "${VMIMAGE}"
+fi
+
+autopkgtest "${TESTSOURCE}" -- qemu "${QEMU_OPT}" "${VMIMAGE}"
